@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 # Google Sheets Configuration
 # -------------------------------
 GOOGLE_CREDENTIALS_FILE = 'weighty-archive-449420-v8-1c9c00e21ff3.json'  # Update this path
-GOOGLE_SHEET_ID = '1aWF15o4pjWOLesg6y-sLUvDrTiRtzBiSqeiYxaWZjDo'  # Update this with your Google Sheet ID
+GOOGLE_SHEET_ID = '1DKWFeFY9xz9b9ZBIPyc0oCTu6Y74Qo66wkI8xhYUrMk'  # Update this with your Google Sheet ID
 
 # Authenticate with Google Sheets using the service account credentials
 scopes = ['https://www.googleapis.com/auth/spreadsheets']
