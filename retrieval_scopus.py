@@ -72,7 +72,7 @@ def get_works_for_issn_scopus(issn, start_year, end_year):
             abstract = entry.get("dc:description", "")
             
             # Extract SDG mapping data – assuming a field "sdgs" exists
-            sdgs_data = entry.get("sdgs", [])
+            sdgs_data = entry.get("sdgs", []) #sdg_classification: ["SDG4", "SDG13"]
             if sdgs_data:
                 sdg_ids = []
                 for sdg in sdgs_data:
