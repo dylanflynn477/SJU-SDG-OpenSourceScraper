@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import time
 
+# Load API key
 load_dotenv()
 API_KEY = os.getenv("SCOPUS_API_KEY")
 
@@ -19,15 +20,20 @@ def load_sdg_queries(directory):
     for fname in os.listdir(directory):
         if fname.endswith(".txt") and fname.startswith("SDG"):
             sdg_id = int(fname[3:5])
-            with open(os.path.join(directory, fname), 'r') as f:
-                queries[sdg_id] = f.read().strip()
+            with open(os.path.join(directory, fname), 'r', encoding='utf-8') as f:
+                raw = f.read().replace('\n', ' ').replace('\r', ' ').strip()
+                simplified = raw.replace("TITLE(", "TITLE-ABS-KEY(").replace("AUTHKEY(", "TITLE-ABS-KEY(")
+                queries[sdg_id] = simplified
     return queries
 
-def query_scopus_count(query, issn, start_year, end_year):
-    filter_query = f"ISSN({issn}) AND PUBYEAR AFT {start_year - 1} AND PUBYEAR BEF {end_year + 1} AND ({query})"
+def query_scopus_count(query, journal_name, start_year, end_year):
+    # Quote journal title
+    journal_quoted = f'SRCTITLE("{journal_name.strip()}")'
+    filter_query = f'{journal_quoted} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
+
     params = {
         'query': filter_query,
-        'count': 0  # Just want the total
+        'count': 0
     }
 
     try:
@@ -35,21 +41,23 @@ def query_scopus_count(query, issn, start_year, end_year):
         if response.status_code == 200:
             return int(response.json()['search-results'].get('opensearch:totalResults', 0))
         elif response.status_code == 429:
-            print("Rate limit hit. Sleeping 10s.")
+            print("⚠️ Rate limit hit. Sleeping 10s.")
             time.sleep(10)
-            return query_scopus_count(query, issn, start_year, end_year)
+            return query_scopus_count(query, journal_name, start_year, end_year)
         else:
-            print(f"Failed query: {response.status_code}")
+            print(f"❌ Failed query ({response.status_code}) for journal: {journal_name}")
+            print("Query preview:", filter_query[:300])
+            print("Response:", response.text[:500])
             return 0
     except Exception as e:
-        print(f"Error querying Scopus: {e}")
+        print(f"❌ Error querying Scopus for journal '{journal_name}': {e}")
         return 0
 
 def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year):
     sdg_counts = {}
     total_articles = 0
     for sdg_id, query in sdg_queries.items():
-        count = query_scopus_count(query, issn, start_year, end_year)
+        count = query_scopus_count(query, journal_name, start_year, end_year)
         sdg_counts[sdg_id] = count
         total_articles += count
 
@@ -81,13 +89,13 @@ def process_all_journals(journals_csv, sdg_query_dir, output_csv, start_year, en
     for _, row in df.iterrows():
         issn = row['ISSN']
         journal_name = row['Journal']
-        print(f"Processing {journal_name} ({issn})...")
+        print(f"🔍 Processing: {journal_name} ({issn})")
         result = process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year)
         if result:
             results.append(result)
 
     pd.DataFrame(results).to_csv(output_csv, index=False)
-    print(f"Saved results to {output_csv}")
+    print(f"✅ All results saved to '{output_csv}'")
 
 if __name__ == "__main__":
     process_all_journals(
