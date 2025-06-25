@@ -28,81 +28,41 @@ def load_sdg_queries(directory):
                 queries[sdg_id] = simplified
     return queries
 
+def query_scopus_count(query, issn, start_year, end_year):
+    """Return the number of search results for the given query."""
+
+    issn_filter = f'ISSN({issn})'
+    filter_query = f'{issn_filter} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
 
 def split_query(query, max_length=1800):
     """Split very long query strings into smaller segments.
 
-    The Scopus API rejects extremely long queries. This function attempts to
-    break a long OR-based query into chunks that are under ``max_length``
-    characters. The splitting is naive and assumes the top-level structure of
-    the query is a series of clauses joined by ``OR``.
-    """
-    cleaned = query.strip()
-    if cleaned.startswith("(") and cleaned.endswith(")"):
-        cleaned = cleaned[1:-1]
-
-    tokens = cleaned.split(") OR (")
-    segments = []
-    current = ""
-    for tok in tokens:
-        tok = tok.strip()
-        if not current:
-            current = tok
-            continue
-
-        candidate = current + ") OR (" + tok
-        if len(candidate) > max_length:
-            segments.append(f"({current})")
-            current = tok
+    try:
+        # Use POST when query is very long to avoid a 414 URI Too Large error
+        if len(filter_query) > 2000:
+            response = requests.post(BASE_URL, headers=HEADERS, data=params)
         else:
-            current = candidate
-
-    if current:
-        segments.append(f"({current})")
-
-    return segments
-
-def query_scopus_count(query, journal_name, start_year, end_year):
-    """Return the number of search results for the given query."""
-
-    segments = split_query(query)
-    total = 0
-
-    for segment in segments:
-        journal_quoted = f'SRCTITLE("{journal_name.strip()}")'
-        filter_query = f'{journal_quoted} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND {segment}'
-
-        params = {
-            'query': filter_query,
-            'count': 0
-        }
-
-        try:
-            if len(filter_query) > 2000:
-                response = requests.post(BASE_URL, headers=HEADERS, data=params)
-            else:
-                response = requests.get(BASE_URL, headers=HEADERS, params=params)
-
-            if response.status_code == 200:
-                total += int(response.json()['search-results'].get('opensearch:totalResults', 0))
-            elif response.status_code == 429:
-                print("⚠️ Rate limit hit. Sleeping 10s.")
-                time.sleep(10)
-                total += query_scopus_count(segment, journal_name, start_year, end_year)
-            else:
-                print(f"❌ Failed query ({response.status_code}) for journal: {journal_name}")
-                print("Query preview:", filter_query[:300])
-                print("Response:", response.text[:500])
-        except Exception as e:
-            print(f"❌ Error querying Scopus for journal '{journal_name}': {e}")
-
-    return total
+            response = requests.get(BASE_URL, headers=HEADERS, params=params)
+        if response.status_code == 200:
+            return int(response.json()['search-results'].get('opensearch:totalResults', 0))
+        elif response.status_code == 429:
+            print("⚠️ Rate limit hit. Sleeping 10s.")
+            time.sleep(10)
+            return query_scopus_count(query, issn, start_year, end_year)
+        else:
+            print(f"❌ Failed query ({response.status_code}) for ISSN: {issn}")
+            print("Query preview:", filter_query[:300])
+            print("Response:", response.text[:500])
+            return 0
+    except Exception as e:
+        print(f"❌ Error querying Scopus for ISSN '{issn}': {e}")
+        return 0
 
 def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year):
     sdg_counts = {}
     total_articles = 0
     for sdg_id, query in sdg_queries.items():
-        count = query_scopus_count(query, journal_name, start_year, end_year)
+        count = query_scopus_count(query, issn, start_year, end_year)
         sdg_counts[sdg_id] = count
         total_articles += count
 
