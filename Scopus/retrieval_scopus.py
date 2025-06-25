@@ -28,11 +28,11 @@ def load_sdg_queries(directory):
     return queries
 
 
-def query_scopus_count(query, journal_name, start_year, end_year):
+def query_scopus_count(query, issn, start_year, end_year):
     """Return the number of search results for the given query."""
 
-    journal_quoted = f'SRCTITLE("{journal_name.strip()}")'
-    filter_query = f'{journal_quoted} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
+    issn_filter = f'ISSN({issn})'
+    filter_query = f'{issn_filter} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
 
     params = {
         'query': filter_query,
@@ -50,21 +50,21 @@ def query_scopus_count(query, journal_name, start_year, end_year):
         elif response.status_code == 429:
             print("⚠️ Rate limit hit. Sleeping 10s.")
             time.sleep(10)
-            return query_scopus_count(query, journal_name, start_year, end_year)
+            return query_scopus_count(query, issn, start_year, end_year)
         else:
-            print(f"❌ Failed query ({response.status_code}) for journal: {journal_name}")
+            print(f"❌ Failed query ({response.status_code}) for ISSN: {issn}")
             print("Query preview:", filter_query[:300])
             print("Response:", response.text[:500])
             return 0
     except Exception as e:
-        print(f"❌ Error querying Scopus for journal '{journal_name}': {e}")
+        print(f"❌ Error querying Scopus for ISSN '{issn}': {e}")
         return 0
 
 def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year):
     sdg_counts = {}
     total_articles = 0
     for sdg_id, query in sdg_queries.items():
-        count = query_scopus_count(query, journal_name, start_year, end_year)
+        count = query_scopus_count(query, issn, start_year, end_year)
         sdg_counts[sdg_id] = count
         total_articles += count
 
