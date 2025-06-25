@@ -27,8 +27,10 @@ def load_sdg_queries(directory):
                 queries[sdg_id] = simplified
     return queries
 
+
 def query_scopus_count(query, journal_name, start_year, end_year):
-    # Quote journal title
+    """Return the number of search results for the given query."""
+
     journal_quoted = f'SRCTITLE("{journal_name.strip()}")'
     filter_query = f'{journal_quoted} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
 
