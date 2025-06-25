@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import time
+import re
 
 # Load API key
 load_dotenv()
@@ -27,17 +28,14 @@ def load_sdg_queries(directory):
                 queries[sdg_id] = simplified
     return queries
 
-
 def query_scopus_count(query, issn, start_year, end_year):
     """Return the number of search results for the given query."""
 
     issn_filter = f'ISSN({issn})'
     filter_query = f'{issn_filter} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
 
-    params = {
-        'query': filter_query,
-        'count': 0
-    }
+def split_query(query, max_length=1800):
+    """Split very long query strings into smaller segments.
 
     try:
         # Use POST when query is very long to avoid a 414 URI Too Large error
