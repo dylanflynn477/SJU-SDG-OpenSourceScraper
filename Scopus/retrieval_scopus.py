@@ -12,7 +12,8 @@ BASE_URL = "https://api.elsevier.com/content/search/scopus"
 
 HEADERS = {
     "Accept": "application/json",
-    "X-ELS-APIKey": API_KEY
+    "X-ELS-APIKey": API_KEY,
+    "Content-Type": "application/x-www-form-urlencoded"
 }
 
 def load_sdg_queries(directory):
@@ -37,7 +38,11 @@ def query_scopus_count(query, journal_name, start_year, end_year):
     }
 
     try:
-        response = requests.get(BASE_URL, headers=HEADERS, params=params)
+        # Use POST when query is very long to avoid a 414 URI Too Large error
+        if len(filter_query) > 2000:
+            response = requests.post(BASE_URL, headers=HEADERS, data=params)
+        else:
+            response = requests.get(BASE_URL, headers=HEADERS, params=params)
         if response.status_code == 200:
             return int(response.json()['search-results'].get('opensearch:totalResults', 0))
         elif response.status_code == 429:
