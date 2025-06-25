@@ -3,7 +3,6 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import time
-import re
 
 # Load API key
 load_dotenv()
@@ -30,12 +29,13 @@ def load_sdg_queries(directory):
 
 def query_scopus_count(query, issn, start_year, end_year):
     """Return the number of search results for the given query."""
-
-    issn_filter = f'ISSN({issn})'
+    issn_filter = f'ISSN({issn.strip()})'
     filter_query = f'{issn_filter} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
 
-def split_query(query, max_length=1800):
-    """Split very long query strings into smaller segments.
+    params = {
+        'query': filter_query,
+        'count': 0
+    }
 
     try:
         # Use POST when query is very long to avoid a 414 URI Too Large error
@@ -105,7 +105,7 @@ def process_all_journals(journals_csv, sdg_query_dir, output_csv, start_year, en
 if __name__ == "__main__":
     process_all_journals(
         journals_csv='journals.csv',
-        sdg_query_dir='./Keys',  # Folder with SDG01.txt, SDG03.txt, etc.
+        sdg_query_dir='./Keys',  # Folder with SDG01.txt, SDG02.txt, etc.
         output_csv='scopus_sdgii.csv',
         start_year=2020,
         end_year=2023
