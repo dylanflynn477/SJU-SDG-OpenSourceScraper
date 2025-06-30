@@ -40,7 +40,7 @@ def query_scopus_count(query, issn, start_year, end_year):
     try:
         # Use POST when query is very long to avoid a 414 URI Too Large error
         if len(filter_query) > 2000:
-            response = requests.post(BASE_URL, headers=HEADERS, data=params)
+            response = requests.post(BASE_URL, headers=HEADERS, adata=params)
         else:
             response = requests.get(BASE_URL, headers=HEADERS, params=params)
         if response.status_code == 200:
