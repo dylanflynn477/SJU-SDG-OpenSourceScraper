@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import time
+from typing import List, Dict
 
 # Load API key
 load_dotenv()
@@ -16,15 +17,43 @@ HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded"
 }
 
-def load_sdg_queries(directory):
-    queries = {}
+def _split_query(query: str, max_len: int = 1800) -> List[str]:
+    """Split a long Scopus query into balanced chunks under ``max_len`` characters."""
+    tokens = query.split(' OR ')
+    parts: List[str] = []
+    current = tokens[0]
+    diff = current.count('(') - current.count(')')
+    for tok in tokens[1:]:
+        candidate = f"{current} OR {tok}"
+        if len(candidate) <= max_len:
+            current = candidate
+            diff += tok.count('(') - tok.count(')')
+        else:
+            if diff > 0:
+                current += ')' * diff
+                tok = '(' * diff + tok
+            elif diff < 0:
+                current = '(' * (-diff) + current
+            parts.append(current)
+            current = tok
+            diff = tok.count('(') - tok.count(')')
+    if diff > 0:
+        current += ')' * diff
+    elif diff < 0:
+        current = '(' * (-diff) + current
+    parts.append(current)
+    return parts
+
+
+def load_sdg_queries(directory: str) -> Dict[int, List[str]]:
+    queries: Dict[int, List[str]] = {}
     for fname in os.listdir(directory):
         if fname.endswith(".txt") and fname.startswith("SDG"):
             sdg_id = int(fname[3:5])
             with open(os.path.join(directory, fname), 'r', encoding='utf-8') as f:
                 raw = f.read().replace('\n', ' ').replace('\r', ' ').strip()
                 simplified = raw.replace("TITLE(", "TITLE-ABS-KEY(").replace("AUTHKEY(", "TITLE-ABS-KEY(")
-                queries[sdg_id] = simplified
+                queries[sdg_id] = _split_query(simplified)
     return queries
 
 def query_scopus_count(query, issn, start_year, end_year):
@@ -38,11 +67,8 @@ def query_scopus_count(query, issn, start_year, end_year):
     }
 
     try:
-        # Use POST when query is very long to avoid a 414 URI Too Large error
-        if len(filter_query) > 2000:
-            response = requests.post(BASE_URL, headers=HEADERS, adata=params)
-        else:
-            response = requests.get(BASE_URL, headers=HEADERS, params=params)
+        # Queries are pre-split to avoid exceeding URL length limits
+        response = requests.get(BASE_URL, headers=HEADERS, params=params)
         if response.status_code == 200:
             return int(response.json()['search-results'].get('opensearch:totalResults', 0))
         elif response.status_code == 429:
@@ -61,8 +87,10 @@ def query_scopus_count(query, issn, start_year, end_year):
 def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year):
     sdg_counts = {}
     total_articles = 0
-    for sdg_id, query in sdg_queries.items():
-        count = query_scopus_count(query, issn, start_year, end_year)
+    for sdg_id, parts in sdg_queries.items():
+        count = 0
+        for part in parts:
+            count += query_scopus_count(part, issn, start_year, end_year)
         sdg_counts[sdg_id] = count
         total_articles += count
 
