@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 import pandas as pd
 import time
 from itertools import cycle
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Iterable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Load API keys (comma separated) or fallback to single key
 load_dotenv()
@@ -193,18 +194,44 @@ def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_
         "Accuracy (%)": round(accuracy, 2)
     }
 
-def process_all_journals(journals_csv, sdg_query_dir, output_csv, start_year, end_year):
+def _process_single(issn: str, journal_name: str, sdg_queries: Dict[int, List[str]],
+                   start_year: int, end_year: int) -> Dict[str, object] | None:
+    """Helper to process a single journal entry."""
+    print(f"🔍 Processing: {journal_name} ({issn})")
+    return process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year)
+
+
+def process_all_journals(journals_csv: str, sdg_query_dir: str, output_csv: str,
+                         start_year: int, end_year: int, num_workers: int = 1) -> None:
+    """Process all journals in ``journals_csv``.
+
+    If ``num_workers`` > 1, journals are processed in parallel using multiple
+    processes. Parallel execution can speed up large datasets but may increase
+    API usage rate.
+    """
     sdg_queries = load_sdg_queries(sdg_query_dir)
     df = pd.read_csv(journals_csv)
     results = []
+
     try:
-        for _, row in df.iterrows():
-            issn = row['ISSN']
-            journal_name = row['Journal']
-            print(f"🔍 Processing: {journal_name} ({issn})")
-            result = process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year)
-            if result:
-                results.append(result)
+        if num_workers > 1:
+            tasks: Iterable[tuple[str, str]] = [
+                (row['ISSN'], row['Journal']) for _, row in df.iterrows()
+            ]
+            with ProcessPoolExecutor(max_workers=num_workers) as exe:
+                future_map = {
+                    exe.submit(_process_single, issn, name, sdg_queries, start_year, end_year):
+                    (issn, name) for issn, name in tasks
+                }
+                for fut in as_completed(future_map):
+                    res = fut.result()
+                    if res:
+                        results.append(res)
+        else:
+            for _, row in df.iterrows():
+                res = _process_single(row['ISSN'], row['Journal'], sdg_queries, start_year, end_year)
+                if res:
+                    results.append(res)
     except KeyboardInterrupt:
         print("\n❌ Interrupted by user. Saving partial results...")
     finally:
@@ -217,5 +244,6 @@ if __name__ == "__main__":
         sdg_query_dir='./Keys',  # Folder with SDG01.txt, SDG02.txt, etc.
         output_csv='scopus_sdgii.csv',
         start_year=2020,
-        end_year=2023
+        end_year=2023,
+        num_workers=1  # Increase this value to enable parallel processing
     )
