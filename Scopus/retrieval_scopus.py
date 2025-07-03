@@ -80,12 +80,13 @@ def query_scopus_count(
     depth: int = 0,
     attempts: int = 0,
     max_attempts: int | None = None,
-) -> Tuple[int, bool]:
-    """Return the number of search results for the given query.
+) -> Tuple[int, bool, int, int]:
+    """Return search results for ``query``.
 
-    Returns a tuple ``(count, error)`` where ``error`` is ``True`` if the query
-    failed and had to be patched or ultimately returned no results due to an
-    error condition.
+    Returns a tuple ``(count, error, success_chars, error_chars)``. ``error`` is
+    ``True`` if the query ultimately failed or needed patching. ``success_chars``
+    and ``error_chars`` track the number of characters that were successfully
+    processed versus those lost due to a 4xx/5xx error.
     """
     issn_filter = f'ISSN({issn.strip()})'
     filter_query = f'{issn_filter} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
@@ -98,15 +99,22 @@ def query_scopus_count(
     if max_attempts is None:
         max_attempts = len(_multi_keys) * 3
 
+    query_len = len(filter_query)
+
     try:
         # Queries are pre-split to avoid exceeding URL length limits
         response = requests.get(BASE_URL, headers=HEADERS, params=params)
         if response.status_code == 200:
-            return int(response.json()['search-results'].get('opensearch:totalResults', 0)), False
+            return (
+                int(response.json()['search-results'].get('opensearch:totalResults', 0)),
+                False,
+                query_len,
+                0,
+            )
         elif response.status_code == 429:
             if attempts >= max_attempts:
                 print("❌ Rate limit persists after multiple attempts.")
-                return 0, True
+                return 0, True, 0, query_len
             print("⚠️ Rate limit hit. Rotating key.")
             rotate_key()
             time.sleep(1)
@@ -121,26 +129,34 @@ def query_scopus_count(
                 parts = _split_query(query, max_len=max(len(query) // 2, 100))
                 total = 0
                 any_error = False
+                succ_chars = 0
+                err_chars = 0
                 for part in parts:
-                    c, e = query_scopus_count(part, issn, start_year, end_year, depth + 1)
+                    c, e, s_c, f_c = query_scopus_count(part, issn, start_year, end_year, depth + 1)
                     total += c
+                    succ_chars += s_c
+                    err_chars += f_c
                     any_error = any_error or e
-                return total, True
-            return 0, True
+                return total, True, succ_chars, err_chars
+            return 0, True, 0, query_len
     except Exception as e:
         print(f"❌ Error querying Scopus for ISSN '{issn}': {e}")
-        return 0, True
+        return 0, True, 0, query_len
 
 def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year):
-    sdg_counts = {}
-    sdg_errors = {}
+    sdg_counts: Dict[int, int] = {}
+    sdg_errors: Dict[int, int] = {}
+    success_chars = 0
+    error_chars = 0
     total_articles = 0
     for sdg_id, parts in sdg_queries.items():
         count = 0
         errors = 0
         for part in parts:
-            c, e = query_scopus_count(part, issn, start_year, end_year)
+            c, e, s_c, f_c = query_scopus_count(part, issn, start_year, end_year)
             count += c
+            success_chars += s_c
+            error_chars += f_c
             if e:
                 errors += 1
         sdg_counts[sdg_id] = count
@@ -149,6 +165,9 @@ def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_
 
     if total_articles == 0:
         return None
+
+    total_chars = success_chars + error_chars
+    accuracy = (success_chars / total_chars) * 100 if total_chars else 0
 
     top_sdgs = sorted(sdg_counts.items(), key=lambda x: x[1], reverse=True)[:3]
     top_total = sum(v for k, v in top_sdgs)
@@ -170,7 +189,8 @@ def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_
         "Top SDG 1": top_sdgs[0][0] if len(top_sdgs) > 0 else "N/A",
         "Top SDG 2": top_sdgs[1][0] if len(top_sdgs) > 1 else "N/A",
         "Top SDG 3": top_sdgs[2][0] if len(top_sdgs) > 2 else "N/A",
-        "Error Summary": error_summary
+        "Error Summary": error_summary,
+        "Accuracy (%)": round(accuracy, 2)
     }
 
 def process_all_journals(journals_csv, sdg_query_dir, output_csv, start_year, end_year):
