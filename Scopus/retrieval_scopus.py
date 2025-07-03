@@ -70,6 +70,7 @@ def query_scopus_count(query, issn, start_year, end_year):
         # Queries are pre-split to avoid exceeding URL length limits
         response = requests.get(BASE_URL, headers=HEADERS, params=params)
         if response.status_code == 200:
+            #print(int(response.json()['search-results'].get('opensearch:totalResults', 0)))
             return int(response.json()['search-results'].get('opensearch:totalResults', 0))
         elif response.status_code == 429:
             print("⚠️ Rate limit hit. Sleeping 10s.")
