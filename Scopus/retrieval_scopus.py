@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import time
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 # Load API key
 load_dotenv()
@@ -56,8 +56,13 @@ def load_sdg_queries(directory: str) -> Dict[int, List[str]]:
                 queries[sdg_id] = _split_query(simplified)
     return queries
 
-def query_scopus_count(query, issn, start_year, end_year):
-    """Return the number of search results for the given query."""
+def query_scopus_count(query: str, issn: str, start_year: int, end_year: int, depth: int = 0) -> Tuple[int, bool]:
+    """Return the number of search results for the given query.
+
+    Returns a tuple ``(count, error)`` where ``error`` is ``True`` if the query
+    failed and had to be patched or ultimately returned no results due to an
+    error condition.
+    """
     issn_filter = f'ISSN({issn.strip()})'
     filter_query = f'{issn_filter} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
 
@@ -70,29 +75,45 @@ def query_scopus_count(query, issn, start_year, end_year):
         # Queries are pre-split to avoid exceeding URL length limits
         response = requests.get(BASE_URL, headers=HEADERS, params=params)
         if response.status_code == 200:
-            #print(int(response.json()['search-results'].get('opensearch:totalResults', 0)))
-            return int(response.json()['search-results'].get('opensearch:totalResults', 0))
+            return int(response.json()['search-results'].get('opensearch:totalResults', 0)), False
         elif response.status_code == 429:
             print("⚠️ Rate limit hit. Sleeping 10s.")
             time.sleep(10)
-            return query_scopus_count(query, issn, start_year, end_year)
+            return query_scopus_count(query, issn, start_year, end_year, depth)
         else:
             print(f"❌ Failed query ({response.status_code}) for ISSN: {issn}")
             print("Query preview:", filter_query[:300])
             print("Response:", response.text[:500])
-            return 0
+            # Attempt to further split the query if possible
+            if depth < 2 and ' OR ' in query:
+                print("↪️ Attempting to split failed query further...")
+                parts = _split_query(query, max_len=max(len(query) // 2, 100))
+                total = 0
+                any_error = False
+                for part in parts:
+                    c, e = query_scopus_count(part, issn, start_year, end_year, depth + 1)
+                    total += c
+                    any_error = any_error or e
+                return total, True
+            return 0, True
     except Exception as e:
         print(f"❌ Error querying Scopus for ISSN '{issn}': {e}")
-        return 0
+        return 0, True
 
 def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year):
     sdg_counts = {}
+    sdg_errors = {}
     total_articles = 0
     for sdg_id, parts in sdg_queries.items():
         count = 0
+        errors = 0
         for part in parts:
-            count += query_scopus_count(part, issn, start_year, end_year)
+            c, e = query_scopus_count(part, issn, start_year, end_year)
+            count += c
+            if e:
+                errors += 1
         sdg_counts[sdg_id] = count
+        sdg_errors[sdg_id] = errors
         total_articles += count
 
     if total_articles == 0:
@@ -104,6 +125,10 @@ def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_
     sdg_presence = (len([v for v in sdg_counts.values() if v > 0]) / 17) * 100
     sdgii_score = 0.5 * sdg_presence + 0.5 * top_dominance
 
+    error_summary = "; ".join(
+        f"SDG{sdg_id:02d}:{errors}" for sdg_id, errors in sdg_errors.items() if errors
+    )
+
     return {
         "Journal": journal_name,
         "ISSN": issn,
@@ -113,7 +138,8 @@ def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_
         "SDGII Score (%)": round(sdgii_score, 2),
         "Top SDG 1": top_sdgs[0][0] if len(top_sdgs) > 0 else "N/A",
         "Top SDG 2": top_sdgs[1][0] if len(top_sdgs) > 1 else "N/A",
-        "Top SDG 3": top_sdgs[2][0] if len(top_sdgs) > 2 else "N/A"
+        "Top SDG 3": top_sdgs[2][0] if len(top_sdgs) > 2 else "N/A",
+        "Error Summary": error_summary
     }
 
 def process_all_journals(journals_csv, sdg_query_dir, output_csv, start_year, end_year):
