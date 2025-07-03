@@ -1,7 +1,13 @@
 import pandas as pd
 import os
 from dotenv import load_dotenv
-from retrieval_scopus import load_sdg_queries, process_journal_sdg_scores
+from retrieval_scopus import (
+    load_sdg_queries,
+    process_journal_sdg_scores,
+    HEADERS,
+    rotate_key,
+    _multi_keys,
+)
 import requests
 import time
 
@@ -14,19 +20,17 @@ END_YEAR = 2024
 
 # === SETUP ===
 load_dotenv()
-API_KEY = os.getenv("SCOPUS_API_KEY")
-HEADERS = {
-    "Accept": "application/json",
-    "X-ELS-APIKey": API_KEY,
-    "Content-Type": "application/x-www-form-urlencoded"
-}
+# HEADERS and rotate_key imported from retrieval_scopus
 
 BASE_URL = "https://api.elsevier.com/content/search/scopus"
 
-def get_total_and_average_citations(issn, start_year, end_year):
+def get_total_and_average_citations(issn, start_year, end_year, attempts=0, max_attempts=None):
     """Query Scopus for total and average citations for a journal."""
     query = f'ISSN({issn}) AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1}'
     params = {'query': query, 'count': 25}  # Fetch up to 25 articles for sample averaging
+
+    if max_attempts is None:
+        max_attempts = len(_multi_keys) * 3
 
     try:
         response = requests.get(BASE_URL, headers=HEADERS, params=params)
@@ -37,9 +41,13 @@ def get_total_and_average_citations(issn, start_year, end_year):
             avg = (total / len(citation_counts)) if citation_counts else 0
             return total, avg
         elif response.status_code == 429:
-            print("⚠️ Rate limit hit. Sleeping 10s.")
-            time.sleep(10)
-            return get_total_and_average_citations(issn, start_year, end_year)
+            if attempts >= max_attempts:
+                print("❌ Rate limit persists after multiple attempts.")
+                return 0, 0
+            print("⚠️ Rate limit hit. Rotating key.")
+            rotate_key()
+            time.sleep(1)
+            return get_total_and_average_citations(issn, start_year, end_year, attempts + 1, max_attempts)
         else:
             print(f"❌ Citation query failed for {issn}: {response.status_code}")
             return 0, 0
@@ -80,14 +88,17 @@ def main():
     journals = pd.read_csv(INPUT_CSV)
     results = []
 
-    for _, row in journals.iterrows():
-        result = compute_r2(row, sdg_queries)
-        if result:
-            results.append(result)
-
-    df = pd.DataFrame(results)
-    df.to_csv(OUTPUT_CSV, index=False)
-    print(f"✅ R² data saved to {OUTPUT_CSV}")
+    try:
+        for _, row in journals.iterrows():
+            result = compute_r2(row, sdg_queries)
+            if result:
+                results.append(result)
+    except KeyboardInterrupt:
+        print("\n❌ Interrupted by user. Saving partial results...")
+    finally:
+        df = pd.DataFrame(results)
+        df.to_csv(OUTPUT_CSV, index=False)
+        print(f"✅ R² data saved to {OUTPUT_CSV}")
 
 if __name__ == '__main__':
     main()

@@ -3,19 +3,35 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 import time
+from itertools import cycle
 from typing import List, Dict, Tuple
 
-# Load API key
+# Load API keys (comma separated) or fallback to single key
 load_dotenv()
-API_KEY = os.getenv("SCOPUS_API_KEY")
+_multi_keys = [k.strip() for k in os.getenv("SCOPUS_API_KEYS", "").split(",") if k.strip()]
+if not _multi_keys:
+    single = os.getenv("SCOPUS_API_KEY")
+    if single:
+        _multi_keys = [single]
+    else:
+        raise RuntimeError("No SCOPUS_API_KEY or SCOPUS_API_KEYS provided")
+
+_api_cycle = cycle(_multi_keys)
+_current_key = next(_api_cycle)
 
 BASE_URL = "https://api.elsevier.com/content/search/scopus"
 
 HEADERS = {
     "Accept": "application/json",
-    "X-ELS-APIKey": API_KEY,
+    "X-ELS-APIKey": _current_key,
     "Content-Type": "application/x-www-form-urlencoded"
 }
+
+def rotate_key() -> None:
+    """Switch to the next API key in the cycle."""
+    global _current_key
+    _current_key = next(_api_cycle)
+    HEADERS["X-ELS-APIKey"] = _current_key
 
 def _split_query(query: str, max_len: int = 1800) -> List[str]:
     """Split a long Scopus query into balanced chunks under ``max_len`` characters."""
@@ -56,7 +72,15 @@ def load_sdg_queries(directory: str) -> Dict[int, List[str]]:
                 queries[sdg_id] = _split_query(simplified)
     return queries
 
-def query_scopus_count(query: str, issn: str, start_year: int, end_year: int, depth: int = 0) -> Tuple[int, bool]:
+def query_scopus_count(
+    query: str,
+    issn: str,
+    start_year: int,
+    end_year: int,
+    depth: int = 0,
+    attempts: int = 0,
+    max_attempts: int | None = None,
+) -> Tuple[int, bool]:
     """Return the number of search results for the given query.
 
     Returns a tuple ``(count, error)`` where ``error`` is ``True`` if the query
@@ -71,15 +95,22 @@ def query_scopus_count(query: str, issn: str, start_year: int, end_year: int, de
         'count': 0
     }
 
+    if max_attempts is None:
+        max_attempts = len(_multi_keys) * 3
+
     try:
         # Queries are pre-split to avoid exceeding URL length limits
         response = requests.get(BASE_URL, headers=HEADERS, params=params)
         if response.status_code == 200:
             return int(response.json()['search-results'].get('opensearch:totalResults', 0)), False
         elif response.status_code == 429:
-            print("⚠️ Rate limit hit. Sleeping 10s.")
-            time.sleep(10)
-            return query_scopus_count(query, issn, start_year, end_year, depth)
+            if attempts >= max_attempts:
+                print("❌ Rate limit persists after multiple attempts.")
+                return 0, True
+            print("⚠️ Rate limit hit. Rotating key.")
+            rotate_key()
+            time.sleep(1)
+            return query_scopus_count(query, issn, start_year, end_year, depth, attempts + 1, max_attempts)
         else:
             print(f"❌ Failed query ({response.status_code}) for ISSN: {issn}")
             print("Query preview:", filter_query[:300])
@@ -146,16 +177,19 @@ def process_all_journals(journals_csv, sdg_query_dir, output_csv, start_year, en
     sdg_queries = load_sdg_queries(sdg_query_dir)
     df = pd.read_csv(journals_csv)
     results = []
-    for _, row in df.iterrows():
-        issn = row['ISSN']
-        journal_name = row['Journal']
-        print(f"🔍 Processing: {journal_name} ({issn})")
-        result = process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year)
-        if result:
-            results.append(result)
-
-    pd.DataFrame(results).to_csv(output_csv, index=False)
-    print(f"✅ All results saved to '{output_csv}'")
+    try:
+        for _, row in df.iterrows():
+            issn = row['ISSN']
+            journal_name = row['Journal']
+            print(f"🔍 Processing: {journal_name} ({issn})")
+            result = process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year)
+            if result:
+                results.append(result)
+    except KeyboardInterrupt:
+        print("\n❌ Interrupted by user. Saving partial results...")
+    finally:
+        pd.DataFrame(results).to_csv(output_csv, index=False)
+        print(f"✅ Results saved to '{output_csv}'")
 
 if __name__ == "__main__":
     process_all_journals(
