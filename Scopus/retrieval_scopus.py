@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import time
 from itertools import cycle
-from typing import List, Dict, Tuple, Iterable
+from typing import List, Dict, Tuple, Iterable, Set
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Load API keys (comma separated) or fallback to single key
@@ -144,25 +144,146 @@ def query_scopus_count(
         print(f"❌ Error querying Scopus for ISSN '{issn}': {e}")
         return 0, True, 0, query_len
 
+def query_scopus_eids(
+    query: str,
+    issn: str,
+    start_year: int,
+    end_year: int,
+    depth: int = 0,
+    attempts: int = 0,
+    max_attempts: int | None = None,
+) -> Tuple[Set[str], bool, int, int]:
+    """Return the set of EIDs matching ``query`` for ``issn``."""
+    issn_filter = f'ISSN({issn.strip()})'
+    filter_query = f'{issn_filter} AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1} AND ({query})'
+
+    params = {
+        'query': filter_query,
+        'field': 'eid',
+        'count': 200,
+        'start': 0,
+    }
+
+    if max_attempts is None:
+        max_attempts = len(_multi_keys) * 3
+
+    query_len = len(filter_query)
+    eids: Set[str] = set()
+    success_chars = 0
+    error_chars = 0
+
+    while True:
+        try:
+            response = requests.get(BASE_URL, headers=HEADERS, params=params)
+            if response.status_code == 200:
+                data = response.json().get('search-results', {})
+                entries = data.get('entry', [])
+                for entry in entries:
+                    eid = entry.get('eid')
+                    if eid:
+                        eids.add(eid)
+                success_chars += query_len
+                total = int(data.get('opensearch:totalResults', 0))
+                if params['start'] + len(entries) >= total or not entries:
+                    break
+                params['start'] += len(entries)
+                time.sleep(0.5)
+                continue
+            elif response.status_code == 429:
+                if attempts >= max_attempts:
+                    print("❌ Rate limit persists after multiple attempts.")
+                    error_chars += query_len
+                    return eids, True, success_chars, error_chars
+                print("⚠️ Rate limit hit. Rotating key.")
+                rotate_key()
+                time.sleep(1)
+                attempts += 1
+                continue
+            else:
+                print(f"❌ Failed query ({response.status_code}) for ISSN: {issn}")
+                print("Query preview:", filter_query[:300])
+                print("Response:", response.text[:500])
+                if depth < 2 and ' OR ' in query:
+                    print("↪️ Attempting to split failed query further...")
+                    parts = _split_query(query, max_len=max(len(query) // 2, 100))
+                    union: Set[str] = set()
+                    succ = 0
+                    err = 0
+                    any_error = False
+                    for part in parts:
+                        ids, e, s_c, f_c = query_scopus_eids(part, issn, start_year, end_year, depth + 1)
+                        union.update(ids)
+                        succ += s_c
+                        err += f_c
+                        any_error = any_error or e
+                    eids.update(union)
+                    success_chars += succ
+                    error_chars += err
+                    return eids, any_error, success_chars, error_chars
+                error_chars += query_len
+                return eids, True, success_chars, error_chars
+        except Exception as e:
+            print(f"❌ Error querying Scopus for ISSN '{issn}': {e}")
+            error_chars += query_len
+            return eids, True, success_chars, error_chars
+
+    return eids, False, success_chars, error_chars
+
+def query_total_articles(
+    issn: str,
+    start_year: int,
+    end_year: int,
+    attempts: int = 0,
+    max_attempts: int | None = None,
+) -> int:
+    """Return the total number of articles for ``issn`` in the period."""
+    filter_query = f'ISSN({issn.strip()}) AND PUBYEAR > {start_year - 1} AND PUBYEAR < {end_year + 1}'
+    params = {'query': filter_query, 'count': 0}
+    if max_attempts is None:
+        max_attempts = len(_multi_keys) * 3
+
+    while True:
+        response = requests.get(BASE_URL, headers=HEADERS, params=params)
+        if response.status_code == 200:
+            return int(response.json()['search-results'].get('opensearch:totalResults', 0))
+        elif response.status_code == 429:
+            if attempts >= max_attempts:
+                print("❌ Rate limit persists after multiple attempts.")
+                return 0
+            print("⚠️ Rate limit hit. Rotating key.")
+            rotate_key()
+            time.sleep(1)
+            attempts += 1
+            continue
+        else:
+            print(f"❌ Failed total count query ({response.status_code}) for ISSN: {issn}")
+            print("Query preview:", filter_query[:300])
+            print("Response:", response.text[:500])
+            return 0
+
 def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_year):
     sdg_counts: Dict[int, int] = {}
     sdg_errors: Dict[int, int] = {}
+    sdg_sets: Dict[int, Set[str]] = {}
     success_chars = 0
     error_chars = 0
-    total_articles = 0
+
     for sdg_id, parts in sdg_queries.items():
-        count = 0
+        eids: Set[str] = set()
         errors = 0
         for part in parts:
-            c, e, s_c, f_c = query_scopus_count(part, issn, start_year, end_year)
-            count += c
+            ids, e, s_c, f_c = query_scopus_eids(part, issn, start_year, end_year)
+            eids.update(ids)
             success_chars += s_c
             error_chars += f_c
             if e:
                 errors += 1
-        sdg_counts[sdg_id] = count
+        sdg_sets[sdg_id] = eids
+        sdg_counts[sdg_id] = len(eids)
         sdg_errors[sdg_id] = errors
-        total_articles += count
+
+    total_articles = query_total_articles(issn, start_year, end_year)
+    unique_sdg_articles = set().union(*sdg_sets.values()) if sdg_sets else set()
 
     if total_articles == 0:
         return None
@@ -173,7 +294,7 @@ def process_journal_sdg_scores(issn, journal_name, sdg_queries, start_year, end_
     top_sdgs = sorted(sdg_counts.items(), key=lambda x: x[1], reverse=True)[:3]
     top_total = sum(v for k, v in top_sdgs)
     top_dominance = (top_sdgs[0][1] / top_total) * 100 if top_total else 0
-    sdg_presence = (len([v for v in sdg_counts.values() if v > 0]) / 17) * 100
+    sdg_presence = (len(unique_sdg_articles) / total_articles) * 100 if total_articles else 0
     sdgii_score = 0.5 * sdg_presence + 0.5 * top_dominance
 
     error_summary = "; ".join(
