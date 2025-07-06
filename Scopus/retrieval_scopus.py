@@ -361,9 +361,9 @@ def process_all_journals(journals_csv: str, sdg_query_dir: str, output_csv: str,
 
 if __name__ == "__main__":
     process_all_journals(
-        journals_csv='journals100.csv',
+        journals_csv='journals.csv',
         sdg_query_dir='./Keys',  # Folder with SDG01.txt, SDG02.txt, etc.
-        output_csv='scopus_sdgii_100.csv',
+        output_csv='scopus_sdgii.csv',
         start_year=2020,
         end_year=2023,
         num_workers=1  # Increase this value to enable parallel processing
