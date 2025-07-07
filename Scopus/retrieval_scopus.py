@@ -160,7 +160,7 @@ def query_scopus_eids(
     params = {
         'query': filter_query,
         'field': 'eid',
-        'count': 200,
+        'count': 25,
         'start': 0,
     }
 
@@ -171,6 +171,7 @@ def query_scopus_eids(
     eids: Set[str] = set()
     success_chars = 0
     error_chars = 0
+    MAX_EIDS = 50000  # Cap how many EIDs we try to retrieve
 
     while True:
         try:
@@ -182,13 +183,21 @@ def query_scopus_eids(
                     eid = entry.get('eid')
                     if eid:
                         eids.add(eid)
+
                 success_chars += query_len
                 total = int(data.get('opensearch:totalResults', 0))
+
+                if len(eids) >= MAX_EIDS:
+                    print(f"🔺 Reached EID cap of {MAX_EIDS}. Truncating results.")
+                    break
+
                 if params['start'] + len(entries) >= total or not entries:
                     break
+
                 params['start'] += len(entries)
-                time.sleep(0.5)
+                time.sleep(1)  # Slight delay to reduce rate limit risk
                 continue
+
             elif response.status_code == 429:
                 if attempts >= max_attempts:
                     print("❌ Rate limit persists after multiple attempts.")
@@ -196,9 +205,15 @@ def query_scopus_eids(
                     return eids, True, success_chars, error_chars
                 print("⚠️ Rate limit hit. Rotating key.")
                 rotate_key()
-                time.sleep(1)
+                time.sleep(2)
                 attempts += 1
                 continue
+
+            elif response.status_code == 400 and "Exceeds the maximum number allowed" in response.text:
+                print("❌ Query too large for service level. Truncating.")
+                error_chars += query_len
+                return eids, True, success_chars, error_chars
+
             else:
                 print(f"❌ Failed query ({response.status_code}) for ISSN: {issn}")
                 print("Query preview:", filter_query[:300])
@@ -222,6 +237,7 @@ def query_scopus_eids(
                     return eids, any_error, success_chars, error_chars
                 error_chars += query_len
                 return eids, True, success_chars, error_chars
+
         except Exception as e:
             print(f"❌ Error querying Scopus for ISSN '{issn}': {e}")
             error_chars += query_len
@@ -366,5 +382,5 @@ if __name__ == "__main__":
         output_csv='scopus_sdgii.csv',
         start_year=2020,
         end_year=2023,
-        num_workers=1  # Increase this value to enable parallel processing
+        num_workers=4  # Increase this value to enable parallel processing
     )
