@@ -378,7 +378,7 @@ def process_all_journals(journals_csv: str, sdg_query_dir: str, output_csv: str,
 if __name__ == "__main__":
     process_all_journals(
         journals_csv='journals.csv',
-        sdg_query_dir='./Keys',  # Folder with SDG01.txt, SDG02.txt, etc.
+        sdg_query_dir='./Keys_2022',  # Folder with SDG01.txt, SDG02.txt, etc.
         output_csv='scopus_sdgii.csv',
         start_year=2020,
         end_year=2023,
