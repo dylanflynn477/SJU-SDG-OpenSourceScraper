@@ -19,9 +19,14 @@ USERNAME = os.getenv("RRBM_USERNAME")
 PASSWORD = os.getenv("RRBM_PASSWORD")
 
 # Google Sheets Configuration
-GOOGLE_CREDENTIALS_FILE = 'weighty-archive-449420-v8-1c9c00e21ff3.json'
-GOOGLE_SHEET_ID = '1hk7F7xh1RMHFmvJ20FHQiZizyYaJjXV5qsdnVu0Qdeg'
-SHEET_NAME = "Sheet4"
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "service-account.json")
+GOOGLE_SHEET_ID = os.getenv("RRBM_GOOGLE_SHEET_ID")
+SHEET_NAME = os.getenv("RRBM_SHEET_NAME", "Sheet4")
+
+if not USERNAME or not PASSWORD:
+    raise RuntimeError("Set RRBM_USERNAME and RRBM_PASSWORD in your environment or .env file")
+if not GOOGLE_SHEET_ID:
+    raise RuntimeError("Set RRBM_GOOGLE_SHEET_ID in your environment or .env file")
 
 # Authenticate with Google Sheets
 scopes = ['https://www.googleapis.com/auth/spreadsheets']

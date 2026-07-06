@@ -1,0 +1,7 @@
+chromedriver-autoinstaller
+gspread
+openpyxl
+pandas
+python-dotenv
+requests
+selenium

@@ -5,12 +5,17 @@ import os
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+from dotenv import load_dotenv
 
 # -------------------------------
 # Google Sheets Configuration
 # -------------------------------
-GOOGLE_CREDENTIALS_FILE = 'weighty-archive-449420-v8-1c9c00e21ff3.json'  # Update this path
-GOOGLE_SHEET_ID = '1aWF15o4pjWOLesg6y-sLUvDrTiRtzBiSqeiYxaWZjDo'  # Update this with your Google Sheet ID
+load_dotenv()
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "service-account.json")
+GOOGLE_SHEET_ID = os.getenv("OAX_GOOGLE_SHEET_ID")
+
+if not GOOGLE_SHEET_ID:
+    raise RuntimeError("Set OAX_GOOGLE_SHEET_ID in your environment or .env file")
 
 # Authenticate with Google Sheets using the service account credentials
 scopes = ['https://www.googleapis.com/auth/spreadsheets']

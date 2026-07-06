@@ -14,8 +14,13 @@ load_dotenv()
 SCOPUS_API_KEY = os.getenv("SCOPUS_API_KEY")  # Your Elsevier Scopus API key
 
 # Google Sheets configuration – update these if necessary
-GOOGLE_CREDENTIALS_FILE = 'weighty-archive-449420-v8-1c9c00e21ff3.json'
-GOOGLE_SHEET_ID = '1aWF15o4pjWOLesg6y-sLUvDrTiRtzBiSqeiYxaWZjDo'
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "service-account.json")
+GOOGLE_SHEET_ID = os.getenv("SCOPUS_GOOGLE_SHEET_ID")
+
+if not SCOPUS_API_KEY:
+    raise RuntimeError("Set SCOPUS_API_KEY in your environment or .env file")
+if not GOOGLE_SHEET_ID:
+    raise RuntimeError("Set SCOPUS_GOOGLE_SHEET_ID in your environment or .env file")
 
 # Authenticate with Google Sheets
 scopes = ['https://www.googleapis.com/auth/spreadsheets']
